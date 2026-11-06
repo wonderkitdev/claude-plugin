@@ -20,6 +20,7 @@ CONNECT="$PLUGIN/scripts/connect.sh"
 CUR_VERSION="$(sed -n 's/^RUNNER_VERSION="\(.*\)"$/\1/p' "$CONNECT")"
 [[ -n "$CUR_VERSION" ]] || { echo "connect.test.sh: no RUNNER_VERSION in $CONNECT" >&2; exit 1; }
 BUMP="$PLUGIN/scripts/bump-runner.sh"
+MANIFEST="$PLUGIN/.claude-plugin/plugin.json"
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/wk-connect-test.XXXXXX")
 SERVER_PID=""
@@ -426,16 +427,24 @@ CURRENT="8 update: swap, keep one, prune"
 H="$TMP/h8"
 bumped() {  # version → path of a connect.sh pinned to that version
   local v="$1" d="$TMP/bump-$1"
-  mkdir -p "$d"; cp "$CONNECT" "$BUMP" "$d/"
+  # The plugin's real layout: scripts/ beside .claude-plugin/ (bump-runner.sh
+  # also rewrites the manifest's version).
+  mkdir -p "$d/scripts" "$d/.claude-plugin"; cp "$CONNECT" "$BUMP" "$d/scripts/"; cp "$MANIFEST" "$d/.claude-plugin/"
   local tgz; tgz=$(make_tarball "$v")
-  bash "$d/bump-runner.sh" "$v" "$tgz" >"$d/bump.log" 2>&1 || { echo "bump-runner.sh failed: $(cat "$d/bump.log")" >&2; }
-  printf '%s' "$d/connect.sh"
+  bash "$d/scripts/bump-runner.sh" "$v" "$tgz" >"$d/bump.log" 2>&1 || { echo "bump-runner.sh failed: $(cat "$d/bump.log")" >&2; }
+  printf '%s' "$d/scripts/connect.sh"
 }
 C1=$(bumped 0.0.1)
 assert_contains "$(cat "$C1")" "RUNNER_VERSION=\"0.0.1\"" "bump rewrote the version"
 assert_contains "$(cat "$C1")" "RUNNER_SHA256_ARM64=\"$(sha256_of "$WWW/wonderkit-runner-0.0.1-darwin-arm64.tar.gz")\"" "bump rewrote the arm64 hash"
 assert_contains "$(cat "$C1")" "RUNNER_SHA256_X64=\"REPLACE_AT_RELEASE\"" "no x64 tarball → x64 stays the placeholder"
 assert_eq "" "$(diff <(grep -v '^RUNNER_VERSION=\|^RUNNER_SHA256_' "$CONNECT") <(grep -v '^RUNNER_VERSION=\|^RUNNER_SHA256_' "$C1"))" "bump changed only the constant block"
+# Claude Code caches an installed plugin by its manifest version: a runner bump
+# that leaves plugin.json's version alone is never picked up by /plugin update
+# (runner 0.1.1, 2026-11-06 — the old cached connect.sh kept installing 0.1.0).
+M1="$(dirname "$(dirname "$C1")")/.claude-plugin/plugin.json"
+assert_contains "$(cat "$M1")" '"version": "0.0.1"' "bump rewrote the plugin manifest's version"
+assert_eq "" "$(diff <(grep -v '"version"' "$MANIFEST") <(grep -v '"version"' "$M1"))" "bump changed only the manifest's version line"
 CONNECT_SCRIPT="$C1" run_connect "$H"
 assert_eq 0 "$CODE" "0.0.1 phase 1: $OUT"
 assert_eq "versions/0.0.1" "$(readlink "$H/.wonderkit/runner")" "runner → 0.0.1"
@@ -499,10 +508,20 @@ CONNECT_SCRIPT="$C4" run_connect "$H"
 assert_eq 0 "$CODE" "0.0.4: $OUT"
 assert_eq $'0.0.3\n0.0.4' "$(ls "$H/.wonderkit/versions")" "with a symlink-path plist only the newest two remain"
 # bump-runner.sh refuses a tarball whose name does not carry the version.
-D="$TMP/bump-bad"; mkdir -p "$D"; cp "$CONNECT" "$BUMP" "$D/"
-OUT=$(bash "$D/bump-runner.sh" 9.9.9 "$GOOD_TGZ" 2>&1); CODE=$?
+D="$TMP/bump-bad"; mkdir -p "$D/scripts" "$D/.claude-plugin"; cp "$CONNECT" "$BUMP" "$D/scripts/"; cp "$MANIFEST" "$D/.claude-plugin/"
+OUT=$(bash "$D/scripts/bump-runner.sh" 9.9.9 "$GOOD_TGZ" 2>&1); CODE=$?
 assert_eq 0 "$([[ $CODE -ne 0 ]] && echo 0 || echo 1)" "bump refuses a mismatched tarball name (got $CODE)"
-assert_eq "" "$(diff "$CONNECT" "$D/connect.sh")" "and leaves the script untouched"
+assert_eq "" "$(diff "$CONNECT" "$D/scripts/connect.sh")" "and leaves the script untouched"
+assert_eq "" "$(diff "$MANIFEST" "$D/.claude-plugin/plugin.json")" "and leaves the manifest untouched"
+# No manifest beside scripts/ → refuse before touching connect.sh (a release
+# that pins the runner but not the plugin version is the bug above).
+D="$TMP/bump-nomanifest"; mkdir -p "$D/scripts"; cp "$CONNECT" "$BUMP" "$D/scripts/"
+OUT=$(bash "$D/scripts/bump-runner.sh" 0.0.9 "$(make_tarball 0.0.9)" 2>&1); CODE=$?
+assert_eq 2 "$CODE" "bump with no plugin manifest exits 2: $OUT"
+assert_eq "" "$(diff "$CONNECT" "$D/scripts/connect.sh")" "and leaves the script untouched"
+# The shipped plugin: its manifest version IS the pinned runner version, so
+# every runner release changes what /plugin update sees.
+assert_contains "$(cat "$MANIFEST")" "\"version\": \"$CUR_VERSION\"" "plugin.json version matches connect.sh's RUNNER_VERSION ($CUR_VERSION)"
 
 # ===========================================================================
 CURRENT="9 containment"
