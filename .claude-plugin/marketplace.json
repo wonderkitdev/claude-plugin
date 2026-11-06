@@ -1,0 +1,12 @@
+{
+  "name": "wonderkit",
+  "description": "Wonderkit's Claude Code plugins",
+  "owner": { "name": "Wonderkit" },
+  "plugins": [
+    {
+      "name": "wonderkit",
+      "source": "./",
+      "description": "Connect your Mac to Wonderkit so your kids' creations build on your own Claude plan."
+    }
+  ]
+}
