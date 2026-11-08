@@ -524,6 +524,65 @@ assert_eq "" "$(diff "$CONNECT" "$D/scripts/connect.sh")" "and leaves the script
 assert_contains "$(cat "$MANIFEST")" "\"version\": \"$CUR_VERSION\"" "plugin.json version matches connect.sh's RUNNER_VERSION ($CUR_VERSION)"
 
 # ===========================================================================
+CURRENT="8b update check: a newer published plugin stops phase 1 with the update steps"
+# The plugin's own version (its manifest), and published manifests on the fixture server.
+SELF_VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST" | head -1)"
+IFS=. read -r SV_MAJ SV_MIN SV_PAT <<<"$SELF_VERSION"
+NEWER="$SV_MAJ.$SV_MIN.$((SV_PAT + 1))"
+mkdir -p "$WWW/m"
+printf '{\n  "name": "wonderkit",\n  "version": "%s",\n  "description": "x"\n}\n' "$NEWER" >"$WWW/m/newer.json"
+printf '{\n  "name": "wonderkit",\n  "version": "%s",\n  "description": "x"\n}\n' "$SV_MAJ.$((SV_MIN + 1)).0" >"$WWW/m/newer-minor.json"
+printf '{\n  "name": "wonderkit",\n  "version": "%s",\n  "description": "x"\n}\n' "$SELF_VERSION" >"$WWW/m/same.json"
+printf '{\n  "name": "wonderkit",\n  "version": "0.0.1",\n  "description": "x"\n}\n' >"$WWW/m/older.json"
+printf '{\n  "name": "wonderkit",\n  "version": "latest\\u001b[31m",\n  "description": "x"\n}\n' >"$WWW/m/garbage.json"
+for which in newer newer-minor; do
+  H="$TMP/h8b-$which"
+  WK_CONNECT_MANIFEST_URL="$BASE_URL/m/$which.json" WK_CONNECT_SHA256="$GOOD_SHA" run_connect "$H"; transcript
+  assert_eq 7 "$CODE" "exit 7 when the published plugin is newer ($which)"
+  assert_contains "$OUT" "A newer Wonderkit plugin is available" "names the update ($which)"
+  assert_contains "$OUT" "this copy is $SELF_VERSION" "names this copy's version ($which)"
+  assert_contains "$OUT" "  claude plugin marketplace update wonderkit" "refresh-the-marketplace step ($which)"
+  assert_contains "$OUT" "  claude plugin update wonderkit@wonderkit" "update-the-plugin step ($which)"
+  assert_contains "$OUT" "quit and reopen Claude Code, and run /wonderkit:connect again" "restart + rerun step ($which)"
+  assert_missing "$H/.wonderkit/versions" "nothing downloaded ($which)"
+  assert_eq "" "$(stub_log "$H")" "the runner never ran ($which)"
+done
+assert_contains "$OUT" "($SV_MAJ.$((SV_MIN + 1)).0;" "a newer minor compares numerically"
+# The update steps come in order: marketplace refresh, then plugin update, then restart.
+U1=$(printf '%s\n' "$OUT" | grep -n "marketplace update" | cut -d: -f1)
+U2=$(printf '%s\n' "$OUT" | grep -n "plugin update wonderkit@" | cut -d: -f1)
+U3=$(printf '%s\n' "$OUT" | grep -n "quit and reopen" | cut -d: -f1)
+assert_eq "yes" "$([[ -n $U1 && -n $U2 && -n $U3 && $U1 -lt $U2 && $U2 -lt $U3 ]] && echo yes || echo no)" "order marketplace < update < restart ($U1,$U2,$U3)"
+
+CURRENT="8c update check: same, older, garbage, unreachable or no manifest → setup carries on"
+for which in same older garbage missing; do
+  H="$TMP/h8c-$which"
+  WK_CONNECT_MANIFEST_URL="$BASE_URL/m/$which.json" WK_CONNECT_SHA256="$GOOD_SHA" run_connect "$H"; transcript
+  assert_eq 0 "$CODE" "phase 1 completes ($which): $OUT"
+  assert_not_contains "$OUT" "newer Wonderkit plugin" "no update line ($which)"
+done
+assert_contains "$(cat "$TMP/h8c-same/.wonderkit/connect.log")" "update check: this plugin $SELF_VERSION, published $SELF_VERSION" "the check is logged"
+assert_contains "$(cat "$TMP/h8c-missing/.wonderkit/connect.log")" "published unknown" "an unreachable manifest is logged as unknown"
+# Unreachable host (a closed loopback port): bounded, carries on.
+H="$TMP/h8c-closed"
+WK_CONNECT_MANIFEST_URL="http://127.0.0.1:9/plugin.json" WK_CONNECT_SHA256="$GOOD_SHA" run_connect "$H"
+assert_eq 0 "$CODE" "a closed port carries on: $OUT"
+# A fixture run never reaches GitHub: a non-loopback override is ignored, and no override means no check.
+H="$TMP/h8c-remote"
+WK_CONNECT_MANIFEST_URL="https://raw.githubusercontent.com/wonderkitdev/claude-plugin/main/.claude-plugin/plugin.json" WK_CONNECT_SHA256="$GOOD_SHA" run_connect "$H"
+assert_eq 0 "$CODE" "non-loopback override ignored"
+assert_not_contains "$(cat "$H/.wonderkit/connect.log")" "update check" "no check ran with a non-loopback override"
+
+CURRENT="8d update check: phase 2 (--finish) never checks"
+H="$TMP/h8d"
+WK_CONNECT_SHA256="$GOOD_SHA" run_connect "$H"
+WK_CONNECT_MANIFEST_URL="$BASE_URL/m/newer.json" run_connect "$H" --finish; transcript
+assert_eq 0 "$CODE" "--finish completes despite a newer published plugin: $OUT"
+assert_not_contains "$OUT" "newer Wonderkit plugin" "no update line in phase 2"
+# The real run reads the public manifest over https only.
+assert_contains "$(cat "$CONNECT")" 'MANIFEST_URL="https://raw.githubusercontent.com/${PLUGIN_REPO}/main/.claude-plugin/plugin.json"' "the public manifest URL"
+
+# ===========================================================================
 CURRENT="9 containment"
 # The plugin never writes into the runner's home (token, sessions, logs) itself.
 for h in "$TMP"/h2 "$TMP"/h5; do
@@ -533,7 +592,8 @@ LEFT=""
 for f in "${TMPDIR:-/tmp}"/wk-connect-err.* "${TMPDIR:-/tmp}"/wk-connect-doc.* "${TMPDIR:-/tmp}"/wk-connect-self.*; do [[ -e "$f" ]] && LEFT="$LEFT $f"; done
 assert_eq "" "$LEFT" "no wk-connect temp files left in TMPDIR"
 # The script never calls launchctl / open / claude itself: only through the stub.
-assert_eq "" "$(grep -v '^[[:space:]]*#' "$CONNECT" | grep -n 'launchctl\|^[[:space:]]*open \|claude -p\|claude plugin' || true)" "no direct launchctl/open/claude call in connect.sh"
+# (Lines that are only a quoted string are printed text, e.g. the update steps.)
+assert_eq "" "$(grep -v '^[[:space:]]*#' "$CONNECT" | grep -v '^[[:space:]]*"' | grep -n 'launchctl\|^[[:space:]]*open \|claude -p\|claude plugin' || true)" "no direct launchctl/open/claude call in connect.sh"
 
 # ===========================================================================
 echo

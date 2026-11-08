@@ -34,8 +34,8 @@ set -u
 set -o pipefail
 
 # ---- release constants (rewritten by scripts/bump-runner.sh at release) ----
-RUNNER_VERSION="0.1.3"
-RUNNER_SHA256_ARM64="a6d5914a7ac4ab39162b23d19d56b0092b24f5ad36e2efe5cc74fe94919acfc7"
+RUNNER_VERSION="0.1.4"
+RUNNER_SHA256_ARM64="2b189d341fe32a901b8d54516a1e85af4b6ed89d1fcdf5dd134e66030c09748b"
 RUNNER_SHA256_X64="REPLACE_AT_RELEASE"
 # ---- end release constants --------------------------------------------------
 
@@ -50,6 +50,9 @@ PLACEHOLDER="REPLACE_AT_RELEASE"
 # variable can never downgrade a real run — and the directory that stands
 # in for ~.
 BASE_URL_OVERRIDE="${WK_CONNECT_BASE_URL:-}"
+# The published plugin manifest the update check reads (fixture runs only,
+# loopback http; a fixture run without it skips the check).
+MANIFEST_URL_OVERRIDE="${WK_CONNECT_MANIFEST_URL:-}"
 SHA_OVERRIDE="${WK_CONNECT_SHA256:-}"
 HOME_ROOT="${WK_CONNECT_HOME_ROOT:-$HOME}"
 
@@ -189,6 +192,48 @@ if [[ "$MODE" == "finish" ]]; then
       say "$LINKED_LINE" "$INSTALLED_LINE"
       fail "$code" "The builder's self-test failed: $(last_line "$ERR")" "Run /wonderkit:connect again." ;;
   esac
+fi
+
+# ---- phase 1: is this the newest plugin? ---------------------------------------
+# A Claude Code session keeps the plugin copy it started with, and
+# `/plugin update` alone doesn't re-read the marketplace — so a parent can
+# run an old connect.sh that installs an old runner (2026-11-08: a 0.1.2
+# session would have reinstalled the runner with the exit-5 install bug).
+# Compare this copy's manifest version with the published one and, when a
+# newer plugin is out, STOP with the update steps: the parent usually runs
+# connect to fix something, and the fix is often in the newer version.
+# Best effort: any failure to learn the published version (offline, GitHub
+# down, an unparseable answer) skips the check — it never blocks setup.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+semver_ok() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+# version_gt A B — true when A is a strictly newer x.y.z than B.
+version_gt() {
+  local IFS=.; local -a a=($1) b=($2); local i
+  for i in 0 1 2; do
+    (( 10#${a[$i]} > 10#${b[$i]} )) && return 0
+    (( 10#${a[$i]} < 10#${b[$i]} )) && return 1
+  done
+  return 1
+}
+manifest_version() { sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
+PLUGIN_VERSION="$(manifest_version <"$SELF_DIR/../.claude-plugin/plugin.json" 2>/dev/null)"
+MANIFEST_URL=""; MANIFEST_PROTO="=https"
+if [[ -n "$BASE_URL_OVERRIDE" ]]; then
+  # A fixture run: only a loopback-http manifest override, never GitHub.
+  if [[ -n "$MANIFEST_URL_OVERRIDE" ]] && loopback_http "$MANIFEST_URL_OVERRIDE"; then MANIFEST_URL="$MANIFEST_URL_OVERRIDE"; MANIFEST_PROTO="=http"; fi
+else
+  MANIFEST_URL="https://raw.githubusercontent.com/${PLUGIN_REPO}/main/.claude-plugin/plugin.json"
+fi
+if [[ -n "$MANIFEST_URL" ]] && semver_ok "$PLUGIN_VERSION"; then
+  LATEST_VERSION="$(curl -fsSL --proto "$MANIFEST_PROTO" --tlsv1.2 --max-time 8 "$MANIFEST_URL" 2>/dev/null | manifest_version | clean 32)"
+  printf -- '-- update check: this plugin %s, published %s\n' "$PLUGIN_VERSION" "${LATEST_VERSION:-unknown}" >>"$LOG"
+  if semver_ok "$LATEST_VERSION" && version_gt "$LATEST_VERSION" "$PLUGIN_VERSION"; then
+    fail 7 "A newer Wonderkit plugin is available ($LATEST_VERSION; this copy is $PLUGIN_VERSION). Nothing on this Mac was changed." \
+      "To update, run these two commands in a terminal (not in Claude Code):" \
+      "  claude plugin marketplace update wonderkit" \
+      "  claude plugin update wonderkit@wonderkit" \
+      "Then quit and reopen Claude Code, and run /wonderkit:connect again."
+  fi
 fi
 
 # ---- phase 1: which tarball, which hash --------------------------------------
