@@ -34,8 +34,8 @@ set -u
 set -o pipefail
 
 # ---- release constants (rewritten by scripts/bump-runner.sh at release) ----
-RUNNER_VERSION="0.1.4"
-RUNNER_SHA256_ARM64="2b189d341fe32a901b8d54516a1e85af4b6ed89d1fcdf5dd134e66030c09748b"
+RUNNER_VERSION="0.1.5"
+RUNNER_SHA256_ARM64="5161fb5f45a07f18024e61714279e5a63a35c73c0c7e4bc070bef9ade692473f"
 RUNNER_SHA256_X64="REPLACE_AT_RELEASE"
 # ---- end release constants --------------------------------------------------
 
