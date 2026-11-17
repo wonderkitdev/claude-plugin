@@ -34,8 +34,8 @@ set -u
 set -o pipefail
 
 # ---- release constants (rewritten by scripts/bump-runner.sh at release) ----
-RUNNER_VERSION="0.1.6"
-RUNNER_SHA256_ARM64="5edbe4e0b3541f487302f3eabfdbf9269e80eb26e1121eae9b64fa997bbac1b9"
+RUNNER_VERSION="0.1.7"
+RUNNER_SHA256_ARM64="fde1b0d8a6cbd580dc0d9038a3fc131a7376a6c167c15ff0b899b40ad9a06c8a"
 RUNNER_SHA256_X64="REPLACE_AT_RELEASE"
 # ---- end release constants --------------------------------------------------
 
@@ -195,8 +195,9 @@ if [[ "$MODE" == "finish" ]]; then
 fi
 
 # ---- phase 1: is this the newest plugin? ---------------------------------------
-# A Claude Code session keeps the plugin copy it started with, and
-# `/plugin update` alone doesn't re-read the marketplace — so a parent can
+# A Claude Code session keeps the plugin copy it started with, and there is
+# no `/plugin update` command (typed, it only opens the panel); third-party
+# marketplaces don't auto-update by default either — so a parent can
 # run an old connect.sh that installs an old runner (2026-11-08: a 0.1.2
 # session would have reinstalled the runner with the exit-5 install bug).
 # Compare this copy's manifest version with the published one and, when a
@@ -229,9 +230,8 @@ if [[ -n "$MANIFEST_URL" ]] && semver_ok "$PLUGIN_VERSION"; then
   printf -- '-- update check: this plugin %s, published %s\n' "$PLUGIN_VERSION" "${LATEST_VERSION:-unknown}" >>"$LOG"
   if semver_ok "$LATEST_VERSION" && version_gt "$LATEST_VERSION" "$PLUGIN_VERSION"; then
     fail 7 "A newer Wonderkit plugin is available ($LATEST_VERSION; this copy is $PLUGIN_VERSION). Nothing on this Mac was changed." \
-      "To update, run these two commands in a terminal (not in Claude Code):" \
-      "  claude plugin marketplace update wonderkit" \
-      "  claude plugin update wonderkit@wonderkit" \
+      "To update it in Claude Code: type /plugin, open the Marketplaces tab, choose wonderkit, and select Update marketplace." \
+      "(Or in a terminal: claude plugin marketplace update wonderkit, then claude plugin update wonderkit@wonderkit.)" \
       "Then quit and reopen Claude Code, and run /wonderkit:connect again."
   fi
 fi

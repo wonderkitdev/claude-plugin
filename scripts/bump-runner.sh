@@ -8,7 +8,7 @@
 # script): RUNNER_VERSION and the per-arch tarball SHA-256s — and the
 # "version" line of .claude-plugin/plugin.json, set to the same version.
 # Claude Code caches an installed plugin by its manifest version, so a runner
-# bump that left the manifest alone was never picked up by /plugin update
+# bump that left the manifest alone was never picked up by a plugin update
 # (runner 0.1.1, 2026-11-06: the cached 0.1.0 connect.sh kept installing 0.1.0). With no x64
 # tarball the x64 hash is set back to the placeholder, so connect.sh refuses
 # Intel Macs with a clear message instead of a wrong hash. Each tarball must

@@ -440,7 +440,7 @@ assert_contains "$(cat "$C1")" "RUNNER_SHA256_ARM64=\"$(sha256_of "$WWW/wonderki
 assert_contains "$(cat "$C1")" "RUNNER_SHA256_X64=\"REPLACE_AT_RELEASE\"" "no x64 tarball → x64 stays the placeholder"
 assert_eq "" "$(diff <(grep -v '^RUNNER_VERSION=\|^RUNNER_SHA256_' "$CONNECT") <(grep -v '^RUNNER_VERSION=\|^RUNNER_SHA256_' "$C1"))" "bump changed only the constant block"
 # Claude Code caches an installed plugin by its manifest version: a runner bump
-# that leaves plugin.json's version alone is never picked up by /plugin update
+# that leaves plugin.json's version alone is never picked up by a plugin update
 # (runner 0.1.1, 2026-11-06 — the old cached connect.sh kept installing 0.1.0).
 M1="$(dirname "$(dirname "$C1")")/.claude-plugin/plugin.json"
 assert_contains "$(cat "$M1")" '"version": "0.0.1"' "bump rewrote the plugin manifest's version"
@@ -520,7 +520,7 @@ OUT=$(bash "$D/scripts/bump-runner.sh" 0.0.9 "$(make_tarball 0.0.9)" 2>&1); CODE
 assert_eq 2 "$CODE" "bump with no plugin manifest exits 2: $OUT"
 assert_eq "" "$(diff "$CONNECT" "$D/scripts/connect.sh")" "and leaves the script untouched"
 # The shipped plugin: its manifest version IS the pinned runner version, so
-# every runner release changes what /plugin update sees.
+# every runner release changes what a plugin update sees.
 assert_contains "$(cat "$MANIFEST")" "\"version\": \"$CUR_VERSION\"" "plugin.json version matches connect.sh's RUNNER_VERSION ($CUR_VERSION)"
 
 # ===========================================================================
@@ -541,18 +541,19 @@ for which in newer newer-minor; do
   assert_eq 7 "$CODE" "exit 7 when the published plugin is newer ($which)"
   assert_contains "$OUT" "A newer Wonderkit plugin is available" "names the update ($which)"
   assert_contains "$OUT" "this copy is $SELF_VERSION" "names this copy's version ($which)"
-  assert_contains "$OUT" "  claude plugin marketplace update wonderkit" "refresh-the-marketplace step ($which)"
-  assert_contains "$OUT" "  claude plugin update wonderkit@wonderkit" "update-the-plugin step ($which)"
+  assert_contains "$OUT" "type /plugin, open the Marketplaces tab, choose wonderkit, and select Update marketplace" "in-app update step ($which)"
+  assert_contains "$OUT" "claude plugin marketplace update wonderkit, then claude plugin update wonderkit@wonderkit" "terminal alternative ($which)"
+  assert_not_contains "$OUT" "/plugin update" "never names the nonexistent /plugin update ($which)"
   assert_contains "$OUT" "quit and reopen Claude Code, and run /wonderkit:connect again" "restart + rerun step ($which)"
   assert_missing "$H/.wonderkit/versions" "nothing downloaded ($which)"
   assert_eq "" "$(stub_log "$H")" "the runner never ran ($which)"
 done
 assert_contains "$OUT" "($SV_MAJ.$((SV_MIN + 1)).0;" "a newer minor compares numerically"
-# The update steps come in order: marketplace refresh, then plugin update, then restart.
-U1=$(printf '%s\n' "$OUT" | grep -n "marketplace update" | cut -d: -f1)
-U2=$(printf '%s\n' "$OUT" | grep -n "plugin update wonderkit@" | cut -d: -f1)
+# The update steps come in order: in-app update, terminal alternative, then restart.
+U1=$(printf '%s\n' "$OUT" | grep -n "select Update marketplace" | cut -d: -f1)
+U2=$(printf '%s\n' "$OUT" | grep -n "Or in a terminal" | cut -d: -f1)
 U3=$(printf '%s\n' "$OUT" | grep -n "quit and reopen" | cut -d: -f1)
-assert_eq "yes" "$([[ -n $U1 && -n $U2 && -n $U3 && $U1 -lt $U2 && $U2 -lt $U3 ]] && echo yes || echo no)" "order marketplace < update < restart ($U1,$U2,$U3)"
+assert_eq "yes" "$([[ -n $U1 && -n $U2 && -n $U3 && $U1 -lt $U2 && $U2 -lt $U3 ]] && echo yes || echo no)" "order in-app < terminal < restart ($U1,$U2,$U3)"
 
 CURRENT="8c update check: same, older, garbage, unreachable or no manifest → setup carries on"
 for which in same older garbage missing; do
